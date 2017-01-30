@@ -20,6 +20,15 @@
 
 
 try:
+    # Ocata+
+    import neutron_lib.api.definitions.portbindings
+    portbindings = neutron_lib.api.definitions.portbindings
+
+except ImportError:
+    import neutron.extensions.portbindings
+    portbindings = neutron.extensions.portbindings
+
+try:
     # Newton+
     import neutron_lib.context
     context = neutron_lib.context
