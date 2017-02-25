@@ -1,4 +1,5 @@
 [gerrit]
-host=review.openstack.org
+host=review.ci.dfj.io
 port=29418
-project=openstack/networking-vpp.git
+project=metacloud/networking-vpp.git
+defaultbranch=mc/1.1
