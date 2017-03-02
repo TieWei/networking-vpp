@@ -56,17 +56,12 @@ except ImportError:
 try:
     CREATE_COMMIT_TIME = events.PRECOMMIT_CREATE
     UPDATE_COMMIT_TIME = events.PRECOMMIT_UPDATE
-    SECURITYGROUP_DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
-    SECURITYGROUP_RULE_DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
-    PRECOMMIT = True
+    DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
 except AttributeError:
     # Liberty fallbacks:
     CREATE_COMMIT_TIME = events.AFTER_CREATE
     UPDATE_COMMIT_TIME = events.AFTER_UPDATE
-    SECURITYGROUP_DELETE_COMMIT_TIME = events.AFTER_DELETE
-    SECURITYGROUP_RULE_DELETE_COMMIT_TIME = events.BEFORE_DELETE
-    PRECOMMIT = False
-
+    DELETE_COMMIT_TIME = events.AFTER_DELETE
 
 LOG = logging.getLogger(__name__)
 
@@ -492,42 +487,41 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
 
         LOG.info("ML2_VPP: Security groups feature is enabled")
+        # Liberty is not capable of trapping precommits, so we can't
+        # register for them in that circumstance.
+        try:
+            events.PRECOMMIT_DELETE
+            do_precommit = True
+        except AttributeError:  # on PRECOMMIT_DELETE not being available
+            do_precommit = False
 
-        # register pre-commit events
-        if PRECOMMIT:
-            # security group precommit events
+        if do_precommit:
             registry.subscribe(self.process_secgroup_commit,
                                resources.SECURITY_GROUP,
                                events.PRECOMMIT_CREATE)
-            registry.subscribe(self.process_secgroup_commit,
-                               resources.SECURITY_GROUP,
-                               events.PRECOMMIT_DELETE)
-            # security group rule precommit events
-            registry.subscribe(self.process_secgroup_commit,
-                               resources.SECURITY_GROUP_RULE,
-                               events.PRECOMMIT_CREATE)
-            registry.subscribe(self.process_secgroup_commit,
-                               resources.SECURITY_GROUP_RULE,
-                               events.PRECOMMIT_DELETE)
-        else:
-            # if not pre commit events, need to subscripe
-            # before commit event for security group rule
-            registry.subscribe(self.process_secgroup_after,
-                               resources.SECURITY_GROUP_RULE,
-                               events.BEFORE_DELETE)
-
-        # register post-commit events
-        # security group post commit events
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP,
                            events.AFTER_CREATE)
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP,
+                               events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP,
                            events.AFTER_DELETE)
-        # security group rule post commit events
+        # NB security group rules can only be created or deleted
+        # We don't trap update, therefore
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP_RULE,
+                               events.PRECOMMIT_CREATE)
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_CREATE)
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP_RULE,
+                               events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_DELETE)
@@ -547,7 +541,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # transaction we can commit the secgroup change but fail to
         # propagate it to the journal and from there  to etcd on a
         # crash.  It's all we can do for Liberty.
-        if not PRECOMMIT:
+        if events.AFTER_CREATE == CREATE_COMMIT_TIME:
             self.process_secgroup_commit(resource, event, trigger, **kwargs)
 
         # Whatever the object that caused this, we've put something
@@ -578,7 +572,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         deleted_rules = []
 
         if resource == resources.SECURITY_GROUP:
-            if event == SECURITYGROUP_DELETE_COMMIT_TIME:
+            if event == DELETE_COMMIT_TIME:
                 self.delete_secgroup_from_etcd(kwargs['security_group_id'])
             elif event == CREATE_COMMIT_TIME:
                 # When Neutron creates a security group it also
@@ -602,7 +596,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # rule and update its entire data.
             # NB: rules are never updated.
 
-            if event == SECURITYGROUP_RULE_DELETE_COMMIT_TIME:
+            if event == DELETE_COMMIT_TIME:
                 rule = self.get_secgroup_rule(res_id, context)
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
                           (rule, res_id))
